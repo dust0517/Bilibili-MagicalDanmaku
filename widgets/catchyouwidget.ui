@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>652</width>
-    <height>405</height>
+    <height>280</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -42,6 +42,28 @@
         </size>
        </property>
       </spacer>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="cdSpin">
+       <property name="toolTip">
+        <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;适当提高冷却值，避免被B站屏蔽&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+       </property>
+       <property name="suffix">
+        <string>毫秒</string>
+       </property>
+       <property name="prefix">
+        <string>冷却</string>
+       </property>
+       <property name="maximum">
+        <number>60000</number>
+       </property>
+       <property name="singleStep">
+        <number>250</number>
+       </property>
+       <property name="value">
+        <number>150</number>
+       </property>
+      </widget>
      </item>
     </layout>
    </item>
@@ -94,6 +116,9 @@
     <widget class="QProgressBar" name="progressBar">
      <property name="value">
       <number>24</number>
+     </property>
+     <property name="format">
+      <string>%v/%m</string>
      </property>
     </widget>
    </item>

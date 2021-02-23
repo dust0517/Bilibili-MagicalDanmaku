@@ -119,7 +119,7 @@ void LiveVideoPlayer::slotLiveStart(QString roomId)
 {
     if (this->roomId != roomId)
         return ;
-    QTimer::singleShot(500, [=]{
+    QTimer::singleShot(useVideoWidget ? 500 : 500, [=]{
         refreshPlayUrl();
     });
 }
@@ -280,7 +280,7 @@ void LiveVideoPlayer::on_videoWidget_customContextMenuRequested(const QPoint&)
 
     FacileMenu* opacityMenu = menu->addMenu(QIcon(":/icons/opacity"), "窗口透明");
     opacityMenu->addNumberedActions("%1", 0, 110, [=](FacileMenuItem* item, int val){
-        item->check(val == int((this->windowOpacity() + 0.0005) * 10) * 10);
+        item->check(val == int((this->windowOpacity() + 0.005) * 10) * 10);
     }, [=](int opa){
         settings.setValue("videoplayer/opacity", opa);
         setWindowOpacity(opa / 100.0);

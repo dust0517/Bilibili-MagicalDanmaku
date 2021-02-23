@@ -28,6 +28,7 @@ CatchYouWidget::CatchYouWidget(QSettings &settings, QWidget *parent) :
     ui->setupUi(this);
     userId = settings.value("paosao/userId").toString();
     ui->tableWidget->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    ui->cdSpin->setValue(settings.value("catch/cd", 150).toInt());
 }
 
 CatchYouWidget::~CatchYouWidget()
@@ -62,13 +63,23 @@ void CatchYouWidget::on_userButton_clicked()
     if (!ok)
         return ;
     settings.setValue("paosao/userId", id);
+
     catchUser(id);
 }
 
 void CatchYouWidget::on_refreshButton_clicked()
 {
     if (!userId.isEmpty())
-        catchUser(userId);
+    {
+        if (users.size()) // 已经找过了，刷新一遍
+        {
+            detectUserLiveStatus(currentTaskTs = QDateTime::currentMSecsSinceEpoch(), 0);
+        }
+        else
+        {
+            catchUser(userId);
+        }
+    }
 }
 
 void CatchYouWidget::getUserFollows(qint64 taskTs, QString userId, int page)
@@ -95,9 +106,13 @@ void CatchYouWidget::getUserFollows(qint64 taskTs, QString userId, int page)
             users.append(UserInfo(QString::number(mid), uname));
         }
 
+        ui->progressBar->setRange(0, total);
+        ui->progressBar->setValue(pageSize * (page - 1) + list.size());
         if (pageSize * page < total && page < 5) // 继续下一页
         {
-            getUserFollows(taskTs, userId, page + 1);
+            QTimer::singleShot(ui->cdSpin->value(), [=]{
+                getUserFollows(taskTs, userId, page + 1);
+            });
         }
         else // 结束了
         {
@@ -115,6 +130,13 @@ void CatchYouWidget::detectUserLiveStatus(qint64 taskTs, int index)
         return ;
 
     UserInfo user = users.at(index);
+    if (user.liveStatus < 0) // 没有直播间或没有开播
+    {
+        // 直接下一个
+        ui->progressBar->setValue(index);
+        detectUserLiveStatus(taskTs, index + 1);
+        return ;
+    }
 
     QString url = "http://api.live.bilibili.com/room/v1/Room/getRoomInfoOld?mid=" + user.userId;
     get(url, [=](QJsonObject json) {
@@ -138,10 +160,18 @@ void CatchYouWidget::detectUserLiveStatus(qint64 taskTs, int index)
             // 先检测弹幕
             detectRoomDanmaku(taskTs, user.userId, roomId);
         }
+        else
+        {
+            UserInfo u = user;
+            u.liveStatus = -1;
+            users[index] = u;
+        }
 
         // 检测下一个
         ui->progressBar->setValue(index);
-        detectUserLiveStatus(taskTs, index + 1);
+        QTimer::singleShot(ui->cdSpin->value(), [=]{
+            detectUserLiveStatus(taskTs, index + 1);
+        });
     });
 }
 
@@ -316,6 +346,18 @@ void CatchYouWidget::get(QString url, std::function<void(QJsonObject)> const fun
     manager->get(*request);
 }
 
+void CatchYouWidget::closeEvent(QCloseEvent *event)
+{
+    settings.setValue("catch/geometry", this->saveGeometry());
+    QWidget::closeEvent(event);
+}
+
+void CatchYouWidget::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    restoreGeometry(settings.value("catch/geometry").toByteArray());
+}
+
 void CatchYouWidget::on_tableWidget_customContextMenuRequested(const QPoint &)
 {
     int row = ui->tableWidget->currentRow();
@@ -351,4 +393,9 @@ void CatchYouWidget::on_tableWidget_customContextMenuRequested(const QPoint &)
     actionPaoSao->deleteLater();
     actionRoom->deleteLater();
     actionPage->deleteLater();
+}
+
+void CatchYouWidget::on_cdSpin_valueChanged(int arg1)
+{
+    settings.setValue("catch/cd", arg1);
 }

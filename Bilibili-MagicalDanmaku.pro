@@ -154,8 +154,11 @@ DISTFILES += \
     android/gradlew.bat \
     android/res/values/libs.xml \
     appicon.ico \
+    pictures/神奇弹幕-用法.pdf \
     resource.rc \
-    resources/LAVFilters-0.74.1-Installer.exe
+    resources/LAVFilters-0.74.1-Installer.exe \
+    resources/点歌姬-用法.pdf \
+    resources/神奇弹幕-用法.pdf
 
 RESOURCES += \
     resource.qrc
@@ -166,7 +169,7 @@ contains(ANDROID_TARGET_ARCH,) {
 }
 
 
-unix|win32: LIBS += -L$$PWD/libs/ -lqhttpserver
+unix|win32: LIBS += -L$$PWD/libs/ -lqhttpserver -lversion
 
 INCLUDEPATH += $$PWD/libs \
     qhttpserver/

@@ -37,7 +37,7 @@ public:
     {
         QString userId;
         QString userName;
-        int liveStatus = 0;
+        int liveStatus = 0; // -1未播，0未知，1直播
 
         UserInfo(QString id, QString name) : userId(id), userName(name)
         {}
@@ -49,6 +49,8 @@ private slots:
     void on_refreshButton_clicked();
 
     void on_tableWidget_customContextMenuRequested(const QPoint &);
+
+    void on_cdSpin_valueChanged(int arg1);
 
 private:
     void getUserFollows(qint64 taskTs, QString userId, int page = 1);
@@ -62,6 +64,10 @@ private:
     void openRoomVideo(QString roomId);
 
     void get(QString url, const std::function<void(QJsonObject)> func);
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     Ui::CatchYouWidget *ui;

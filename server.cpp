@@ -125,7 +125,7 @@ void MainWindow::sendSocketCmd(QString cmd, LiveDanmaku danmaku)
     json.insert("cmd", cmd);
     QByteArray ba = QJsonDocument(json).toJson();
 
-    foreach (QWebSocket* socket, musicSockets)
+    foreach (QWebSocket* socket, danmakuSockets)
     {
        socket->sendTextMessage(ba);
     }
@@ -194,6 +194,56 @@ void MainWindow::sendMusicList(const SongList& songs, QWebSocket *socket)
            socket->sendTextMessage(ba);
         }
     }
+}
+
+void MainWindow::syncMagicalRooms()
+{
+    QString appVersion = GetFileVertion(QApplication::applicationFilePath()).trimmed();
+    if (appVersion.startsWith("v") || appVersion.startsWith("V"))
+        appVersion.replace(0, 1, "");
+
+    get("http://iwxyi.com/blmagicaldanmaku/enable_room.php?room_id="
+        + roomId + "&user_id=" + cookieUid + "&username=" + cookieUname.toUtf8().toPercentEncoding()
+        + "&title=" + roomTitle.toUtf8().toPercentEncoding() + "&version=" + appVersion, [=](QJsonObject json){
+        // 检测数组
+        QJsonArray roomArray = json.value("rooms").toArray();
+        magicalRooms.clear();
+        foreach (QJsonValue val, roomArray)
+        {
+            magicalRooms.append(val.toString());
+        }
+
+        // 检测新版
+        QString lastestVersion = json.value("lastest_version").toString();
+        if (lastestVersion.startsWith("v") || lastestVersion.startsWith("V"))
+            lastestVersion.replace(0, 1, "");
+
+        if (lastestVersion > appVersion)
+        {
+            this->appNewVersion = lastestVersion;
+            this->appDownloadUrl = json.value("download_url").toString();
+            ui->actionUpdate_New_Version->setText("有新版本：" + appNewVersion);
+            ui->actionUpdate_New_Version->setIcon(QIcon(":/icons/new_version"));
+            ui->actionUpdate_New_Version->setEnabled(true);
+            statusLabel->setText("有新版本：" + appNewVersion);
+            qDebug() << "有新版本" << appNewVersion << appDownloadUrl;
+        }
+
+        QString msg = json.value("message").toString();
+        if (!msg.isEmpty())
+        {
+            QMessageBox::information(this, "神奇弹幕", "msg");
+        }
+
+        if(json.value("auto_open").toBool())
+        {
+            QMessageBox::information(this, "版本更新", "您的版本已过旧，可能存在潜在问题，请尽快更新");
+            QDesktopServices::openUrl(appDownloadUrl);
+        }
+
+        if (json.value("force_update").toBool())
+            QApplication::quit();
+    });
 }
 
 void MainWindow::serverHandle(QHttpRequest *req, QHttpResponse *resp)
@@ -286,7 +336,7 @@ void MainWindow::serverHandleUrl(QString urlPath, QHttpRequest *req, QHttpRespon
             qWarning() << "文件：" << filePath << "不存在";
             return errorStr("路径：" + urlPath + " 无法访问！", QHttpResponse::STATUS_NOT_FOUND);
         }
-        else if (isFileType("png|jpg|jpeg|bmp|gif")) // 图片文件
+        else if (isFileType("png|jpg|jpeg|bmp")) // 图片文件
         {
             QByteArray imageType = "png";
             if (suffix == "gif")
@@ -302,7 +352,7 @@ void MainWindow::serverHandleUrl(QString urlPath, QHttpRequest *req, QHttpRespon
         else // 不需要处理或者未知类型的文件
         {
             // html、txt、JS、CSS等，直接读取文件
-            file.open(QIODevice::ReadOnly | QIODevice::Text);
+            file.open(QIODevice::ReadOnly);
             doc = file.readAll();
             file.close();
         }

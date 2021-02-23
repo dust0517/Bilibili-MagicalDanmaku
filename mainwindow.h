@@ -492,6 +492,12 @@ private slots:
 
     void on_actionCatch_You_Online_triggered();
 
+    void on_pkBlankButton_clicked();
+
+    void on_actionUpdate_New_Version_triggered();
+
+    void on_startOnRebootCheck_clicked();
+
 private:
     void appendNewLiveDanmakus(QList<LiveDanmaku> roomDanmakus);
     void appendNewLiveDanmaku(LiveDanmaku danmaku);
@@ -633,9 +639,15 @@ private:
     void initMusicServer();
     void sendMusicList(const SongList& songs, QWebSocket* socket = nullptr);
 
+    void syncMagicalRooms();
+
+    QString GetFileVertion(QString fullName);
+
 private:
     Ui::MainWindow *ui;
     QSettings settings;
+    QString appNewVersion;
+    QString appDownloadUrl;
 
     // 房间信息
     QString roomId;
@@ -752,6 +764,8 @@ private:
     int toutaCount = 0;
     int chiguaCount = 0;
     int oppositeTouta = 0; // 对面是否偷塔（用作判断）
+    QStringList toutaBlankList; // 偷塔黑名单
+    QStringList magicalRooms; // 同样使用神奇弹幕的房间
 
     // 大乱斗串门
     bool pkChuanmenEnable = false;
@@ -784,7 +798,7 @@ private:
     LiveVideoPlayer* videoPlayer = nullptr;
 
     // 机器人
-    bool judgeRobot = false;
+    int judgeRobot = 0;
     QSettings robotRecord;
     QList<QWebSocket*> robots_sockets;
 

@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QJsonObject>
+#include <QDebug>
 
 enum MessageType
 {
@@ -20,6 +21,8 @@ enum MessageType
     MSG_ATTENTION,
     MSG_BLOCK,
     MSG_MSG,
+    MSG_SHARE,
+    MSG_PK_BEST
 };
 
 class LiveDanmaku
@@ -103,6 +106,11 @@ public:
         : msgType(MSG_MSG), text(msg), timeline(QDateTime::currentDateTime())
     {
 
+    }
+
+    LiveDanmaku(QString uname, int win, int votes)
+        : msgType(MSG_PK_BEST), nickname(uname), level(win), total_coin(votes)
+    {
     }
 
     static LiveDanmaku fromDanmakuJson(QJsonObject object)
@@ -224,6 +232,12 @@ public:
         {
             object.insert("text", text);
         }
+        else if (msgType == MSG_PK_BEST)
+        {
+            object.insert("level", level);
+            object.insert("total_coin", total_coin);
+        }
+
         object.insert("timeline", timeline.toString("yyyy-MM-dd hh:mm:ss"));
         object.insert("msgType", (int)msgType);
         if (!anchor_roomid.isEmpty())
@@ -334,6 +348,11 @@ public:
         this->msgType = MSG_ATTENTION;
         prev_timestamp = attentionTime;
         attention = true;
+    }
+
+    void transToShare()
+    {
+        this->msgType = MSG_SHARE;
     }
 
     void setMedal(QString roomId, QString name, int level, QString color, QString up = "")
