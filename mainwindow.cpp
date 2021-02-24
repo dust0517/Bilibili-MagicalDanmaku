@@ -22,7 +22,7 @@ QList<qint64> CommonValues::notWelcomeUsers;         // 不自动欢迎
 QList<qint64> CommonValues::notReplyUsers;           // 不自动回复
 QHash<int, QString> CommonValues::giftNames;         // 自定义礼物名字
 QList<EternalBlockUser> CommonValues::eternalBlockUsers; // 永久禁言
-QSet<qint64> CommonValues::currentGuards;           // 当前船员
+QHash<qint64, QString> CommonValues::currentGuards;  // 当前船员
 QString CommonValues::browserCookie;
 QString CommonValues::browserData;
 QString CommonValues::csrf_token;
@@ -35,6 +35,7 @@ MainWindow::MainWindow(QWidget *parent)
       robotRecord(QApplication::applicationDirPath()+"/robots.ini", QSettings::Format::IniFormat)
 {
     ui->setupUi(this);
+    QApplication::setQuitOnLastWindowClosed(false);
     connect(qApp, &QApplication::paletteChanged, this, [=](const QPalette& pa){
         ui->tabWidget->setPalette(pa);
     });
@@ -65,7 +66,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 移除间隔
     removeTimer = new QTimer(this);
-    removeTimer->setInterval(1000);
+    removeTimer->setInterval(200);
     connect(removeTimer, SIGNAL(timeout()), this, SLOT(removeTimeoutDanmaku()));
     removeTimer->start();
 
@@ -2236,7 +2237,6 @@ void MainWindow::getRoomInfo(bool reconnect)
         QJsonObject roomInfo = dataObj.value("room_info").toObject();
         QJsonObject anchorInfo = dataObj.value("anchor_info").toObject();
 
-
         // 获取房间信息
         roomId = QString::number(roomInfo.value("room_id").toInt()); // 应当一样，但防止是短ID
         ui->roomIdEdit->setText(roomId);
@@ -2251,10 +2251,10 @@ void MainWindow::getRoomInfo(bool reconnect)
                  << "  uid=" << upUid;
 
         roomTitle = roomInfo.value("title").toString();
-        setWindowTitle(roomTitle + " - " + QApplication::applicationName());
-        tray->setToolTip(roomTitle + " - " + QApplication::applicationName());
-        ui->roomNameLabel->setText(roomTitle);
         upName = anchorInfo.value("base_info").toObject().value("uname").toString();
+        setWindowTitle(roomTitle + " - " + upName);
+        tray->setToolTip(roomTitle + " - " + upName);
+        ui->roomNameLabel->setText(roomTitle + " - " + upName);
         if (liveStatus != 1)
             ui->popularityLabel->setText("未开播");
         else
@@ -2267,7 +2267,7 @@ void MainWindow::getRoomInfo(bool reconnect)
             if (pkId.toLongLong() > 0 && reconnect)
             {
                 pking = true;
-                pkVideo = pkStatus == 2;
+                pkVideo = pkStatus == 2; // 注意：如果是匹配到后、开始前，也算是1/2,
                 getPkInfoById(roomId, pkId);
                 qDebug() << "正在大乱斗：" << pkId << pkStatus;
             }
@@ -2487,9 +2487,9 @@ void MainWindow::getUpFace(QString uid)
     });
 }
 
-void MainWindow::getUpPortrait(QString face)
+void MainWindow::getUpPortrait(QString faceUrl)
 {
-    get(face, [=](QNetworkReply* reply){
+    get(faceUrl, [=](QNetworkReply* reply){
         QByteArray jpegData = reply->readAll();
 
         QPixmap pixmap;
@@ -2507,9 +2507,26 @@ void MainWindow::getUpPortrait(QString face)
         painter.drawPixmap(0, 0, side, side, pixmap);
 
         // 设置到程序
-        setWindowIcon(upFace);
-        tray->setIcon(upFace);
+        QPixmap face = liveStatus ? getLivingPixmap(upFace) : upFace;
+        setWindowIcon(face);
+        tray->setIcon(face);
     });
+}
+
+/**
+ * 给直播中的头像添加绿点
+ */
+QPixmap MainWindow::getLivingPixmap(QPixmap pixmap) const
+{
+    if (pixmap.isNull())
+        return pixmap;
+    QPainter painter(&pixmap);
+    int wid = qMin(pixmap.width(), pixmap.height()) / 3;
+    QRect rect(pixmap.width() - wid, pixmap.height() - wid, wid, wid);
+    QPainterPath path;
+    path.addEllipse(rect);
+    painter.fillPath(path, Qt::green);
+    return pixmap;
 }
 
 /**
@@ -2729,19 +2746,20 @@ void MainWindow::getPkInfoById(QString roomId, QString pkId)
         // 获取用户信息
         // pk_pre_time  pk_start_time  pk_frozen_time  pk_end_time
         QJsonObject pkData = json.value("data").toObject();
+        qint64 pkStartTime = static_cast<qint64>(pkData.value("pk_start_time").toDouble());
         pkEndTime = static_cast<qint64>(pkData.value("pk_frozen_time").toDouble());
 
         QJsonObject initInfo = pkData.value("init_info").toObject();
         QJsonObject matchInfo = pkData.value("match_info").toObject();
-        if (matchInfo.value("room_id").toString() != roomId)
+        if (snum(qint64(matchInfo.value("room_id").toDouble())) == roomId)
         {
             QJsonObject temp = initInfo;
             initInfo = matchInfo;
             matchInfo = temp;
         }
 
-        pkRoomId = matchInfo.value("room_id").toString();
-        pkUid = matchInfo.value("uid").toString();
+        pkRoomId = snum(qint64(matchInfo.value("room_id").toDouble()));
+        pkUid = snum(qint64(matchInfo.value("uid").toDouble()));
         pkUname = matchInfo.value("uname").toString();
         myVotes = initInfo.value("votes").toInt();
         matchVotes = matchInfo.value("votes").toInt();
@@ -2751,25 +2769,29 @@ void MainWindow::getPkInfoById(QString roomId, QString pkId)
         {
             danmakuWindow->showStatusText();
             danmakuWindow->setToolTip(pkUname);
-            danmakuWindow->setPkStatus(1);
+            danmakuWindow->setPkStatus(1, pkRoomId.toLongLong(), pkUid.toLongLong(), pkUname);
         }
         ui->actionShow_PK_Video->setEnabled(true);
 
         qint64 currentTime = QDateTime::currentSecsSinceEpoch();
-        qint64 deltaEnd = pkEndTime - currentTime;
-        QTimer::singleShot(qMax(0, int(deltaEnd*1000 - pkJudgeEarly)), [=]{
-            if (!pking || roomId != this->roomId) // 比如换房间了
-            {
-                qDebug() << "大乱斗结束前，逻辑不正确" << pking << roomId
-                         << QDateTime::currentSecsSinceEpoch() << pkEndTime;
-                return ;
-            }
-            slotPkEnding();
-        });
-        QTimer::singleShot(deltaEnd, [=]{
-            pkEnding = false;
-            pkVoting = 0;
-        });
+        // 已经开始大乱斗
+        if (currentTime > pkStartTime) // !如果是刚好开始，可能不能运行下面的，也可能不会触发"PK_START"，不管了
+        {
+            qint64 deltaEnd = pkEndTime - currentTime;
+            QTimer::singleShot(qMax(0, int(deltaEnd*1000 - pkJudgeEarly)), [=]{
+                if (!pking || roomId != this->roomId) // 比如换房间了
+                {
+                    qDebug() << "大乱斗结束前，逻辑不正确" << pking << roomId
+                             << QDateTime::currentSecsSinceEpoch() << pkEndTime;
+                    return ;
+                }
+                slotPkEnding();
+            });
+            QTimer::singleShot(deltaEnd, [=]{
+                pkEnding = false;
+                pkVoting = 0;
+            });
+        }
     });
 }
 
@@ -4504,6 +4526,17 @@ bool MainWindow::execFunc(QString msg, CmdResponse &res, int &resVal)
             localNotify(msg);
             return true;
         }
+
+        re = RE("localNotify\\s*\\((\\d+)\\s*,\\s*(.+?)\\s*\\)");
+        if (msg.indexOf(re, 0, &match) > -1)
+        {
+            QStringList caps = match.capturedTexts();
+            QString uid = caps.at(1);
+            QString msg = caps.at(2);
+            qDebug() << "执行命令：" << caps;
+            localNotify(msg, uid.toLongLong());
+            return true;
+        }
     }
 
     // 朗读文本
@@ -4952,7 +4985,7 @@ void MainWindow::slotBinaryMessageReceived(const QByteArray &message)
 //                    if (delta_fans) // 如果有变动，实时更新
 //                        getFansAndUpdate();
                     fansLabel->setText("粉丝:" + snum(fans));
-                    fansLabel->setToolTip("粉丝数量：" + snum(fans) + "，粉丝团：" + snum(fans_club));
+                    fansLabel->setToolTip("粉丝数量：" + snum(fans) + "，粉丝团：" + snum(fans_club) + (currentGuards.size() ? "，船员数：" + snum(currentGuards.size()) : ""));
                 }
                 else if (cmd == "WIDGET_BANNER") // 无关的横幅广播
                 {}
@@ -5199,9 +5232,7 @@ void MainWindow::handleMessage(QJsonObject json)
             qDebug() << "忽视PK导致的开播情况";
             return ;
         }
-//        QString roomId = json.value("roomid").toString();
-//        if (roomId.isEmpty())
-//            roomId = QString::number(static_cast<qint64>(json.value("roomid").toDouble()));
+        QString roomId = json.value("roomid").toString();
 //        if (roomId == this->roomId || roomId == this->shortId) // 是当前房间的
         {
             QString text = ui->startLiveWordsEdit->text();
@@ -5871,6 +5902,8 @@ void MainWindow::handleMessage(QJsonObject json)
         }
         QString gd = results.at(1);
         QString uname = results.at(2); // 这个昵称会被系统自动省略（太长后面会是两个点）
+        if (currentGuards.contains(uid))
+            uname = currentGuards[uid];
         int guardLevel = 0;
         if (gd == "总督")
             guardLevel = 1;
@@ -5960,6 +5993,7 @@ void MainWindow::handleMessage(QJsonObject json)
         QString spreadDesc = data.value("spread_desc").toString();
         QString spreadInfo = data.value("spread_info").toString();
         QJsonObject fansMedal = data.value("fans_medal").toObject();
+        QString roomId = snum(qint64(data.value("room_id").toDouble()));
         bool opposite = pking &&
                 ((oppositeAudience.contains(uid) && !myAudience.contains(uid))
                  || (!pkRoomId.isEmpty() &&
@@ -5976,6 +6010,12 @@ void MainWindow::handleMessage(QJsonObject json)
                          QString("#%1").arg(fansMedal.value("medal_color").toInt(), 6, 16, QLatin1Char('0')),
                          "");
         danmaku.setOpposite(opposite);
+
+        if (roomId != "0" && roomId != this->roomId) // 关注对面主播，也会引发关注事件
+        {
+            qDebug() << "不是本房间，已忽略：" << roomId << "!=" << this->roomId;
+            return ;
+        }
 
         if (msgType == 1) // 进入直播间
         {
@@ -6087,7 +6127,7 @@ void MainWindow::handleMessage(QJsonObject json)
         {
             triggerCmdEvent("FIRST_GUARD", danmaku);
         }
-        currentGuards.insert(uid);
+        currentGuards[uid] = username;
 
         if (!justStart && ui->autoSendGiftCheck->isChecked())
         {
@@ -7545,7 +7585,7 @@ void MainWindow::updateExistGuards(int page)
     auto judgeGuard = [=](QJsonObject user){
         QString username = user.value("username").toString();
         qint64 uid = static_cast<qint64>(user.value("uid").toDouble());
-        currentGuards.insert(uid);
+        currentGuards[uid] = username;
         int count = danmakuCounts->value("guard/" + snum(uid), 0).toInt();
         if (!count)
         {
@@ -7920,6 +7960,8 @@ void MainWindow::on_timerConnectServerCheck_clicked()
     settings.setValue("live/timerConnectServer", enable);
     if (!liveStatus && enable)
         startConnectRoom();
+    else if (!enable && (!socket || socket->state() == QAbstractSocket::UnconnectedState))
+        startConnectRoom();
 }
 
 void MainWindow::on_startLiveHourSpin_valueChanged(int arg1)
@@ -8053,6 +8095,7 @@ void MainWindow::on_actionShow_Live_Danmaku_triggered()
         connect(danmakuWindow, SIGNAL(signalEternalBlockUser(qint64,QString)), this, SLOT(eternalBlockUser(qint64,QString)));
         connect(danmakuWindow, SIGNAL(signalCancelEternalBlockUser(qint64)), this, SLOT(cancelEternalBlockUser(qint64)));
         connect(danmakuWindow, SIGNAL(signalAIReplyed(QString)), this, SLOT(slotAIReplyed(QString)));
+        connect(danmakuWindow, SIGNAL(signalShowPkVideo()), this, SLOT(on_actionShow_PK_Video_triggered()));
         connect(danmakuWindow, &LiveDanmakuWindow::signalChangeWindowMode, this, [=]{
             danmakuWindow->deleteLater();
             danmakuWindow = nullptr;
@@ -8327,15 +8370,6 @@ void MainWindow::on_actionGet_Play_Url_triggered()
 
 void MainWindow::on_actionShow_Live_Video_triggered()
 {
-    /*if (videoPlayer == nullptr)
-    {
-        videoPlayer = new LiveVideoPlayer(settings, nullptr);
-        connect(this, &MainWindow::signalRoomChanged, this, [=](QString roomId){
-            videoPlayer->setRoomId(roomId);
-        });
-    }
-    videoPlayer->show();
-    videoPlayer->setRoomId(roomId);*/
     if (roomId.isEmpty())
         return ;
 
@@ -8519,7 +8553,7 @@ void MainWindow::pkStart(QJsonObject json)
     {
         danmakuWindow->showStatusText();
         danmakuWindow->setToolTip(pkUname);
-        danmakuWindow->setPkStatus(1);
+        danmakuWindow->setPkStatus(1, pkRoomId.toLongLong(), pkUid.toLongLong(), pkUname);
     }
     qint64 pkid = static_cast<qint64>(json.value("pk_id").toDouble());
     qDebug() << "开启大乱斗, id =" << pkid << "  room=" << pkRoomId << "  user=" << pkUid << "   battle_type=" << battle_type;
@@ -8679,7 +8713,7 @@ void MainWindow::pkEnd(QJsonObject json)
     {
         danmakuWindow->hideStatusText();
         danmakuWindow->setToolTip("");
-        danmakuWindow->setPkStatus(0);
+        danmakuWindow->setPkStatus(0, 0, 0, "");
     }
     QString bestName = "";
     int winnerType = 0;
@@ -9045,6 +9079,7 @@ void MainWindow::handlePkMessage(QJsonObject json)
         if (!pkChuanmenEnable) // 可能是中途关了
             return ;
         QJsonObject data = json.value("data").toObject();
+        int msgType = data.value("msg_type").toInt(); // 1进入直播间，2关注，3分享直播间，4特别关注
         qint64 uid = static_cast<qint64>(data.value("uid").toDouble());
         QString username = data.value("uname").toString();
         qint64 timestamp = static_cast<qint64>(data.value("timestamp").toDouble());
@@ -9054,19 +9089,23 @@ void MainWindow::handlePkMessage(QJsonObject json)
         QString spreadDesc = data.value("spread_desc").toString();
         QString spreadInfo = data.value("spread_info").toString();
         QJsonObject fansMedal = data.value("fans_medal").toObject();
+        QString roomId = snum(qint64(data.value("room_id").toDouble()));
         bool toView = pking &&
                 ((!oppositeAudience.contains(uid) && myAudience.contains(uid))
                  || (!pkRoomId.isEmpty() &&
                      snum(static_cast<qint64>(fansMedal.value("anchor_roomid").toDouble())) == roomId));
+        bool attentionToMyRoom = false;
         if (!toView) // 不是自己方过去串门的
-            return ;
+        {
+            if (roomId == this->roomId && msgType == 2) // 在对面关注当前主播
+                attentionToMyRoom = true;
+            else
+                return ;
+        }
         if (!cmAudience.contains(uid))
             cmAudience.insert(uid, 1);
-        localNotify(username + " 跑去对面串门", uid); // 显示一个短通知，就不作为一个弹幕了
 
-        /*qDebug() << s8("pk观众进入：") << username;
-        if (isSpread)
-            qDebug() << s8("    pk来源：") << spreadDesc;
+        qDebug() << s8("pk观众互动：") << username << spreadDesc;
         QString localName = getLocalNickname(uid);
         LiveDanmaku danmaku(username, uid, QDateTime::fromSecsSinceEpoch(timestamp), isadmin,
                             unameColor, spreadDesc, spreadInfo);
@@ -9077,7 +9116,32 @@ void MainWindow::handlePkMessage(QJsonObject json)
                          "");
         danmaku.setToView(toView);
         danmaku.setPkLink(true);
-        appendNewLiveDanmaku(danmaku);*/
+
+        if (attentionToMyRoom)
+        {
+            danmaku.transToAttention(timestamp);
+            localNotify("对面的 " + username + " 关注了本直播间", uid);
+            triggerCmdEvent("ATTENTION_ON_OPPOSITE", danmaku);
+        }
+        else if (msgType == 1)
+        {
+            localNotify(username + " 跑去对面串门", uid); // 显示一个短通知，就不作为一个弹幕了
+            triggerCmdEvent("CALL_ON_OPPOSITE", danmaku);
+        }
+        else if (msgType == 2)
+        {
+            danmaku.transToAttention(timestamp);
+            localNotify(username + " 关注了对面直播间", uid); // XXX
+            triggerCmdEvent("ATTENTION_OPPOSITE", danmaku);
+        }
+        else if (msgType == 3)
+        {
+            danmaku.transToShare();
+            localNotify(username + " 分享了对面直播间", uid); // XXX
+            triggerCmdEvent("SHARE_OPPOSITE", danmaku);
+        }
+
+        // appendNewLiveDanmaku(danmaku);
     }
 }
 
@@ -9098,6 +9162,8 @@ void MainWindow::releaseLiveData()
     pkEnding = false;
     pkVoting = 0;
     pkVideo = false;
+    pkTimer->stop();
+    pkEndTime = 0;
     myAudience.clear();
     oppositeAudience.clear();
     fansList.clear();
@@ -9139,6 +9205,10 @@ void MainWindow::releaseLiveData()
     ui->actionShow_PK_Video->setEnabled(false);
 
     finishLiveRecord();
+
+    QPixmap face = roomId.isEmpty() ? QPixmap() : upFace;
+    setWindowIcon(face);
+    tray->setIcon(face);
 }
 
 QRect MainWindow::getScreenRect()
@@ -9857,6 +9927,11 @@ void MainWindow::slotStartWork()
     {
         sendExpireGift();
     }
+
+    // 设置直播状态
+    QPixmap face = getLivingPixmap(upFace);
+    setWindowIcon(face);
+    tray->setIcon(face);
 
     // 同步所有的使用房间，避免使用神奇弹幕的偷塔误杀
     QString useRoom = roomId;

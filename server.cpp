@@ -26,7 +26,7 @@ void MainWindow::openServer(int port)
 
     // 弹幕socket
     danmakuSocketServer = new QWebSocketServer("Danmaku", QWebSocketServer::NonSecureMode, this);
-    if (danmakuSocketServer->listen(QHostAddress::LocalHost, quint16(serverPort + DANMAKU_SERVER_PORT)))
+    if (danmakuSocketServer->listen(QHostAddress::Any, quint16(serverPort + DANMAKU_SERVER_PORT)))
     {
         qDebug() << "开启弹幕服务" << serverPort + DANMAKU_SERVER_PORT;
         connect(danmakuSocketServer, &QWebSocketServer::newConnection, this, [=]{
@@ -42,9 +42,28 @@ void MainWindow::openServer(int port)
             });
             connect(clientSocket, &QWebSocket::textMessageReceived, this, [=](const QString &message){
                 qDebug() << "danmaku text message received:" << message;
+                QJsonParseError error;
+                QJsonDocument document = QJsonDocument::fromJson(message.toUtf8(), &error);
+                if (error.error != QJsonParseError::NoError)
+                {
+                    qDebug() << error.errorString() << message;
+                    return ;
+                }
+                QJsonObject json = document.object();
+                QString cmd = json.value("cmd").toString();
+                if (cmd == "cmds")
+                {
+                    QStringList sl;
+                    QJsonArray arr = json.value("data").toArray();
+                    foreach (QJsonValue val, arr)
+                        sl << val.toString();
+                    danmakuCmdsMaps[clientSocket] = sl;
+                }
             });
             connect(clientSocket, &QWebSocket::disconnected, this, [=]{
                 danmakuSockets.removeOne(clientSocket);
+                if (danmakuCmdsMaps.contains(clientSocket))
+                    danmakuCmdsMaps.remove(clientSocket);
                 clientSocket->deleteLater();
     //            qDebug() << "danmaku socket 关闭" << danmakuSockets.size();
             });
@@ -93,6 +112,8 @@ void MainWindow::closeServer()
     // server->close(); // 这个不是关闭端口的……
     server->deleteLater();
     server = nullptr;
+
+    danmakuSocketServer->close();
     danmakuSocketServer->deleteLater();
     danmakuSocketServer = nullptr;
     foreach (QWebSocket* socket, danmakuSockets) {
@@ -127,6 +148,8 @@ void MainWindow::sendSocketCmd(QString cmd, LiveDanmaku danmaku)
 
     foreach (QWebSocket* socket, danmakuSockets)
     {
+        if (danmakuCmdsMaps.contains(socket) && !danmakuCmdsMaps[socket].contains(cmd))
+            continue;
        socket->sendTextMessage(ba);
     }
 }
@@ -204,6 +227,7 @@ void MainWindow::syncMagicalRooms()
 
     get("http://iwxyi.com/blmagicaldanmaku/enable_room.php?room_id="
         + roomId + "&user_id=" + cookieUid + "&username=" + cookieUname.toUtf8().toPercentEncoding()
+        + "&up_uid=" + upUid + "&up_name=" + upName.toUtf8().toPercentEncoding()
         + "&title=" + roomTitle.toUtf8().toPercentEncoding() + "&version=" + appVersion, [=](QJsonObject json){
         // 检测数组
         QJsonArray roomArray = json.value("rooms").toArray();

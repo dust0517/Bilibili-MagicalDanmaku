@@ -533,7 +533,8 @@ private:
     void getRoomCover(QString url);
     QPixmap getRoundedPixmap(QPixmap pixmap) const;
     void getUpFace(QString uid);
-    void getUpPortrait(QString face);
+    void getUpPortrait(QString faceUrl);
+    QPixmap getLivingPixmap(QPixmap pixmap) const;
     void getDanmuInfo();
     void getFansAndUpdate();
     void getPkInfoById(QString roomId, QString pkId);
@@ -830,6 +831,7 @@ private:
     QHash<QString, QString> contentTypeMap;
     QWebSocketServer* danmakuSocketServer = nullptr;
     QList<QWebSocket*> danmakuSockets;
+    QHash<QWebSocket*, QStringList> danmakuCmdsMaps;
 
     QWebSocketServer* musicSocketServer = nullptr;
     QList<QWebSocket*> musicSockets;
